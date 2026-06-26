@@ -537,6 +537,9 @@ def _activate_game(k, g, today):
 def _poll_game(k, gm):
     # type: (KalshiClient, GameMonitor) -> List[Dict]
     """One poll cycle for a game: fetch feed + prices. Returns new events."""
+    if ts_now() < gm.game_start_ts:
+        return []
+
     feed = get_json(f'https://statsapi.mlb.com/api/v1.1/game/{gm.game_pk}/feed/live')
     new_events = []
     if feed:
@@ -555,12 +558,11 @@ def _poll_game(k, gm):
                 f'pre_mid={ev["pre_mid"]}')
             write_event(ev)
             gm.event_count += 1
-    if ts_now() >= gm.game_start_ts:
-        rows = gm.fetch_all_prices(k)
-        write_prices(rows)
-        gm.price_row_count += len(rows)
-        log(f'  [{gm.away}@{gm.home}] '
-            + '  '.join(f'{r["word"][:4]}={r["mid"]}' for r in rows if r.get('mid') != ''))
+    rows = gm.fetch_all_prices(k)
+    write_prices(rows)
+    gm.price_row_count += len(rows)
+    log(f'  [{gm.away}@{gm.home}] '
+        + '  '.join(f'{r["word"][:4]}={r["mid"]}' for r in rows if r.get('mid') != ''))
     return new_events
 
 
