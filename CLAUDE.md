@@ -35,16 +35,46 @@ on both environments.
 
 **Local repo:** `/Users/Ari/repos/personal/money/baseball-mentions/`
 **Server path:** `/root/baseball-mentions/`
+**GitHub repo:** `https://github.com/ateich7/baseball-mentions` (private)
 
-## All scripts run on the remote server
+## Version control & deploy workflow
 
-Edit files locally, then immediately sync to the server:
+The repo is on GitHub. **Claude handles all commits and deploys** — the user
+never needs to run git commands manually.
 
+**Standard deploy (after any code change):**
 ```bash
-scp -i ~/.ssh/claude-server-key <file> root@167.71.111.41:/root/baseball-mentions/<file>
+# Claude does this automatically:
+git add <changed files>
+git commit -m "..."
+git push
+ssh trading-server "cd /root/baseball-mentions && git pull && systemctl restart baseball-monitor"
 ```
 
-Verify with matching checksums: `md5 <file>` locally vs `md5sum <file>` on server.
+**If only monitor.py changed**, restart the service after pull.
+**If only bet_today.py / utils.py changed**, no restart needed — next run picks it up.
+**After retraining**, the monitor auto-reloads the model; no restart needed.
+
+**What is and isn't in git:**
+
+| In git | Not in git (server-only or generated) |
+|--------|---------------------------------------|
+| All `.py` files | `kalshi_key.txt` (RSA private key) |
+| `CLAUDE.md`, `.gitignore` | `retrain.py` (server-only script) |
+| `kalshi_outcomes.csv` | `models/*.pkl` (retrained on server) |
+| `archive/scripts/`, `archive/data/` | `monitor_state.json` (runtime state) |
+| | `data/latency_*.jsonl/.csv` |
+| | `archive/transcripts/`, `archive/logs/` |
+| | `.claude/settings.local.json` |
+
+**Server-only files** (`kalshi_key.txt`, `retrain.py`, model `.pkl`) live only on
+the server and are never committed. To edit `retrain.py`: read it from the server
+first, edit locally, then `scp` it over (it's not in git).
+
+**Server git setup:** Uses a deploy key at `~/.ssh/github_deploy` (read-only,
+scoped to this repo). SSH config at `~/.ssh/config` routes `github.com` to it.
+
+## All scripts run on the remote server
 
 **Never run `monitor.py` locally.** Kalshi credentials exist only on the server.
 
