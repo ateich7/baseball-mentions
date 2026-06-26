@@ -666,7 +666,7 @@ def main() -> None:
                         gm.last_heartbeat_ts = ts_now()
                         snaps = gm.price_row_count // max(len(gm.word_tickers), 1)
                         tg_send(
-                            f'Heartbeat: {gm.away}@{gm.home}\n'
+                            f'{gm.away}@{gm.home}\n'
                             f'Events: {gm.event_count}  Snapshots: {snaps}\n'
                             f'Still monitoring...'
                         )
