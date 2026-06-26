@@ -607,11 +607,15 @@ def main() -> None:
             for g in games_info:
                 log(f'  {g["away"]}@{g["home"]}  status={g["status"]}')
 
+            lines = [f'Latency collection — {today}']
+            for g in games_info:
+                lines.append(f'  {g["away"]}@{g["home"]}')
+            tg_send('\n'.join(lines))
+
             # pending: national games not yet on Kalshi (or not yet started)
-            pending         = [g for g in games_info if g['status'] != 'Final']
-            monitors        = []   # type: List[GameMonitor]
-            announced       = False
-            last_retry_ts   = 0.0  # force immediate first attempt
+            pending       = [g for g in games_info if g['status'] != 'Final']
+            monitors      = []   # type: List[GameMonitor]
+            last_retry_ts = 0.0  # force immediate first attempt
 
             while pending or monitors:
 
@@ -639,16 +643,6 @@ def main() -> None:
                             log(f'  {g["away"]}@{g["home"]} — no Kalshi markets yet')
                             still_pending.append(g)
                     pending = still_pending
-
-                # ── Send startup Telegram once first game is active ────────────
-                if monitors and not announced:
-                    announced = True
-                    lines = [f'Latency collection — {today}']
-                    for gm in monitors:
-                        lines.append(f'  {gm.away}@{gm.home}  ({len(gm.word_tickers)} markets)')
-                    if pending:
-                        lines.append(f'  + {len(pending)} game(s) awaiting Kalshi markets')
-                    tg_send('\n'.join(lines))
 
                 # ── If nothing active yet, wait and retry ─────────────────────
                 if not monitors:
