@@ -609,7 +609,11 @@ def main() -> None:
 
             lines = [f"Todays Games — {today.strftime('%B %-d')}"]
             for g in games_info:
-                lines.append(f'  {g["away"]}@{g["home"]}')
+                if g.get('game_start_ts'):
+                    t = datetime.fromtimestamp(g['game_start_ts'], ET).strftime('%-I:%M%p').lower()
+                else:
+                    t = '?'
+                lines.append(f'  {t}  {g["away"]}@{g["home"]}')
             tg_send('\n'.join(lines))
 
             # pending: national games not yet on Kalshi (or not yet started)
