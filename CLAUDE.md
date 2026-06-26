@@ -48,12 +48,12 @@ never needs to run git commands manually.
 git add <changed files>
 git commit -m "..."
 git push
-ssh trading-server "cd /root/baseball-mentions && git pull && systemctl restart baseball-monitor"
+ssh trading-server "cd /root/baseball-mentions && git pull"
 ```
 
-**If only monitor.py changed**, restart the service after pull.
-**If only bet_today.py / utils.py changed**, no restart needed — next run picks it up.
-**After retraining**, the monitor auto-reloads the model; no restart needed.
+No services need restarting after a pull — `collect_latency_data.py` is run
+manually and picks up changes on the next invocation. If the monitor is ever
+reactivated, restart it with `systemctl restart baseball-monitor`.
 
 **What is and isn't in git:**
 
@@ -102,34 +102,37 @@ KALSHI_KEY_PATH=/root/baseball-mentions/kalshi_key.txt
 
 ---
 
-## Daily workflow
+## Daily workflow (current — latency arbitrage phase)
 
-**Before first pitch:**
+**On game days** (nationally televised games only): start data collection on the server.
 ```bash
-python bet_today.py --min-edge 0.08          # dry run — review recs
-python bet_today.py --min-edge 0.08 --execute  # place as maker (1¢ inside ask, no fees)
-python bet_today.py --min-edge 0.08 --execute --taker  # lift ask immediately
+ssh trading-server
+cd /root/baseball-mentions
+KALSHI_KEY_ID=5da099c4-b40e-4ce0-a9a0-9f22fad881e5 \
+KALSHI_KEY_PATH=/root/baseball-mentions/kalshi_key.txt \
+/root/baseball-env/bin/python collect_latency_data.py
 ```
+The script auto-discovers national games from Kalshi open events, polls
+MLB live feed every 10s, writes events + prices to `data/`. Runs all day,
+sleeps overnight, resumes next day. Kill with Ctrl-C when done collecting.
 
-**Next morning (after games settle):**
+**After a collection session** (next session, not necessarily same day):
 ```bash
+ssh trading-server
+cd /root/baseball-mentions
+/root/baseball-env/bin/python analyze_latency.py
+```
+Prints per-event price movement at T+0/10/30/60/120/300s, cross-market
+snapshots, and a summary table of average lag per word.
+
+**Prediction pipeline (inactive — kept for reference):**
+```bash
+# These all live in prediction/ on both local and server
+cd /root/baseball-mentions/prediction
 python check_results.py   # open positions + settled P&L
 ```
 
-**Model retraining (automated — cron at 11:00 UTC / 7am ET daily):**
-
-The server cron runs `/root/baseball-mentions/retrain.py` which:
-1. Runs `kalshi_outcomes.py` to refresh settled game data
-2. Skips retraining if no new games were added (sends a Telegram "no new data" message)
-3. Runs `train_kalshi_model.py` if rows increased
-4. Sends a Telegram summary with the per-word AUC table
-
-The monitor auto-reloads `models/kalshi_models.pkl` when its mtime changes —
-no restart needed after retraining.
-
-Log: `/var/log/baseball-retrain.log`
-
-To retrain manually on the server:
+**Model retraining (cron PAUSED — manual only if ever needed):**
 ```bash
 ssh trading-server
 cd /root/baseball-mentions
@@ -138,29 +141,43 @@ KALSHI_KEY_PATH=/root/baseball-mentions/kalshi_key.txt \
 /root/baseball-env/bin/python retrain.py
 ```
 
-**Important:** `retrain.py` exists on the server but is NOT in the local repo.
-If you edit it locally, create it first, then scp it over. It uses
-`/root/baseball-env/bin/python` (the server's venv), not Anaconda.
+**Note:** `retrain.py` exists on the server but is NOT in the local repo.
+To edit: read from server, edit locally, scp back. Uses `/root/baseball-env/bin/python`.
 
 ---
 
 ## Pipeline overview
 
+### Active (latency arbitrage)
+
 | File | Where | Role |
 |------|-------|------|
-| `kalshi.py` | local + server | `KalshiClient` — RSA-PSS auth, all Kalshi HTTP calls |
-| `kalshi_outcomes.py` | local + server | Downloads settled KXMLBMENTION events + MLB features → `kalshi_outcomes.csv` |
-| `train_kalshi_model.py` | local + server | Trains logistic regression models → `models/kalshi_models.pkl` |
-| `bet_today.py` | local + server | Fetches today's schedule, builds features, queries Kalshi prices, recommends/places bets |
-| `monitor.py` | server only | Persistent loop; adaptive polling, maker→taker switch, repricing, Telegram alerts |
-| `retrain.py` | **server only** | Daily cron wrapper: runs outcomes → skips or retrains → Telegram summary |
-| `check_results.py` | local + server | Shows open positions and settled P&L |
-| `utils.py` | local + server | Shared helpers: `get_json`, `ip_to_float`, `fetch_team_stats`, `TICKER_SUFFIX_TO_WORD` |
-| `broadcast_crews.py` | local + server | Static `CREW` dict mapping `(network, year)` → `(announcer_1, announcer_2)` |
+| `collect_latency_data.py` | local + server root | Main loop: polls MLB live feed + Kalshi prices every 10s; writes to `data/` |
+| `analyze_latency.py` | local + server root | Post-game analysis: aligns events to price time series, prints lag stats |
+| `kalshi.py` | local + server root | `KalshiClient` — RSA-PSS auth, all Kalshi HTTP calls |
+| `utils.py` | local + server root | Shared helpers: `get_json`, `ip_to_float`, `fetch_team_stats`, `TICKER_SUFFIX_TO_WORD` |
+| `test_pipeline.py` | local + server root | Smoke-tests the data pipeline with synthetic test data |
+
+### Inactive — prediction pipeline (in `prediction/` subdir)
+
+| File | Where | Role |
+|------|-------|------|
+| `prediction/kalshi_outcomes.py` | local + server | Downloads settled KXMLBMENTION events + MLB features → `data/kalshi_outcomes.csv` |
+| `prediction/train_kalshi_model.py` | local + server | Trains logistic regression models → `models/kalshi_models.pkl` |
+| `prediction/bet_today.py` | local + server | Fetches today's schedule, builds features, queries Kalshi prices, recommends/places bets |
+| `prediction/monitor.py` | local + server | Persistent loop; adaptive polling, maker→taker switch, repricing, Telegram alerts |
+| `prediction/check_results.py` | local + server | Shows open positions and settled P&L |
+| `prediction/settled_review.py` | local + server | Reviews settled markets |
+| `prediction/broadcast_crews.py` | local + server | Static `CREW` dict mapping `(network, year)` → `(announcer_1, announcer_2)` |
+| `retrain.py` | **server only** | Cron wrapper: runs outcomes → skips or retrains → Telegram summary |
 
 **Server-only files not in local repo:** `retrain.py`. If editing it, read from
 server first (`ssh trading-server cat /root/baseball-mentions/retrain.py`), edit
 locally, then scp back.
+
+**Server file structure:** Latency scripts (`collect_latency_data.py`, `analyze_latency.py`,
+`kalshi.py`, `utils.py`) live at `/root/baseball-mentions/` root. The old prediction
+pipeline is in `/root/baseball-mentions/prediction/`.
 
 **`.bak` files on server** (`bet_today.py.bak`, `monitor.py.bak`, etc.) are
 the previous versions before the last deploy. Safe to ignore; don't sync them locally.
@@ -317,44 +334,40 @@ caps any single bet at 50% of balance. With ~$50 balance, typical bet: $1–$4.
 
 ## monitor.py lifecycle
 
-`monitor.py` runs as `baseball-monitor.service` (confirmed active). Managed
-with standard systemctl:
+**`baseball-monitor.service` is currently INACTIVE and DISABLED** (stopped June 8, 2026).
+The project has pivoted to latency arbitrage; `monitor.py` is not being used.
 
+If ever reactivated:
 ```bash
 ssh trading-server
-systemctl status baseball-monitor      # is it running?
-journalctl -u baseball-monitor -f      # live logs
-systemctl restart baseball-monitor     # restart after a code deploy
-systemctl stop baseball-monitor        # stop
 systemctl start baseball-monitor       # start
+systemctl status baseball-monitor      # check
+journalctl -u baseball-monitor -f      # live logs
+systemctl stop baseball-monitor        # stop
 ```
 
-Log file: `/var/log/baseball-monitor.log` (also accessible via `/logs` Telegram command)
-State file: `/root/baseball-mentions/monitor_state.json` (resets daily at midnight)
-
-The monitor auto-reloads `models/kalshi_models.pkl` when its mtime changes —
-retraining takes effect without a restart.
-
 Unit file: `/etc/systemd/system/baseball-monitor.service`
-Key settings: `Restart=always`, `RestartSec=30`, `RuntimeMaxSec=86400` (forced
-daily restart), `MemoryMax=200M`, `WorkingDirectory=/root/baseball-mentions`
+Key settings: `Restart=always`, `RestartSec=30`, `RuntimeMaxSec=86400`,
+`MemoryMax=200M`, `WorkingDirectory=/root/baseball-mentions`
 
 **Env vars** set in the unit file:
 `KALSHI_KEY_ID`, `KALSHI_KEY_PATH=/root/baseball-mentions/kalshi_key.txt`,
 `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, `PYTHONUNBUFFERED=1`
 
-Active logs are in `/var/log/`. Stale `output*.log` files from old manual runs are in `archive/logs/` locally.
+Log file (if active): `/var/log/baseball-monitor.log`
+State file: `/root/baseball-mentions/monitor_state.json`
 
 ---
 
 ## Telegram alerting
 
-`TELEGRAM_TOKEN` and `TELEGRAM_CHAT_ID` are env vars set in both the systemd
-unit and the cron retrain job. Values are confirmed in
-`systemctl show baseball-monitor --property=Environment`.
+`TELEGRAM_TOKEN` and `TELEGRAM_CHAT_ID` are env vars. When running
+`collect_latency_data.py` manually they must be set in the shell, or the
+script runs silently without Telegram. When `baseball-monitor.service` was
+active, these were set in the unit file.
 
-To debug: if `tg_send()` silently fails it prints `WARN tg_send: <error>` to
-the service log (`journalctl -u baseball-monitor -n 50`).
+`tg_send()` silently swallows errors — if messages aren't arriving, check for
+`WARN tg_send:` in the script's stdout.
 
 ---
 
@@ -363,8 +376,10 @@ the service log (`journalctl -u baseball-monitor -n 50`).
 The account peaked at ~$317 (2026-05-16) before a 94% drawdown to $18.11
 (2026-05-22). Net P&L on 129 settled bets: -$222.08 on $756.08 wagered (-29% ROI).
 Primary causes: May 15 TORDET single-game loss ~$90, persistent bunt NO losses,
-MVP volatility at scale. Account is in diagnostic/tweak mode; daily cron retrain
-is paused while model is being improved.
+MVP volatility at scale. No new bets placed since mid-May; account is dormant
+while the latency arbitrage strategy is developed.
+
+Daily cron retrain is paused. No active positions.
 
 Check the current balance on the server:
 ```bash
@@ -421,37 +436,42 @@ Use `utils.ip_to_float()` for all IP conversion.
 
 *Update this section at the start of each session to reflect where things stand.*
 
-**As of 2026-06-14:**
-- **Strategy pivot**: moved from pre-game prediction to real-time latency arbitrage.
-  See `collect_latency_data.py` + `analyze_latency.py`. Old monitor/bet_today
-  still present but not being actively run.
-- Active market set shrank to 12 words on 2026-06-07: Kalshi dropped `bullpen`,
-  `perfect_game`, `triple`, `double_play`. Current set: pinch hit, mvp, pitch clock,
-  grand slam, extra inning, trade, bases loaded, what a catch, walk off, bunt, error, wild pitch.
-- Data collection phase: running `collect_latency_data.py` during nationally televised
-  games to measure MLB API → Kalshi repricing lag. Output: `data/latency_events.jsonl`,
-  `data/latency_prices.csv`.
-- `monitor.py` running as `baseball-monitor.service`; currently paused (exposure at 40% cap)
-- Daily cron retrain paused while model is being diagnosed and improved
-- `is_national` and `day_night_bin` intentionally removed from features (skewed predictions)
-- Sibling NBA project: `/Users/Ari/repos/personal/money/basketball-mentions/`
-  - `monitor_nba.py` running as `nba-monitor.service` (systemd, same setup as baseball)
-- MLB Outcomes project (`/root/mlb-outcomes/`):
-  - `mlb-monitor.service` live and running as of 2026-05-22
-  - Today's bets placed (TB@NYY NO, TEX@LAA NO, etc.), $4.91 spent, $5 cap hit
-  - Daily noon ET P&L report via cron → @MLB_Outcomes_Bot
+**As of 2026-06-26:**
 
-**Retraining policy:** Do NOT retrain daily while tweaking. Retrain manually
-after each meaningful code/feature change, on a stable dataset. Resume cron
-only once model shows consistent edge.
+**Active strategy: latency arbitrage data collection**
+- `collect_latency_data.py` is the only active script. It is run manually on
+  game days (nationally televised games only). As of today it is currently
+  running on the server (PID 2069525, started ~16:12 UTC).
+- All betting monitors are DEAD and DISABLED:
+  - `baseball-monitor.service` — stopped June 8, disabled
+  - `nba-monitor.service` — stopped June 8, disabled
+  - `mlb-monitor.service` — stopped June 14, disabled
+- No relevant cron jobs running (daily retrain cron is paused; mlb-outcomes daily
+  report cron appears gone too — verify before assuming it still runs).
 
-**Note on `bet_today.py`:** Running this manually bypasses the monitor's exposure
-cap. Keep it to dry-run mode (`--dry-run`) unless monitoring carefully.
+**Data collected so far:**
+- `data/latency_events.jsonl` — 178 events from 5 games (June 14, 20, 21)
+- `data/latency_prices.csv` — ~291k price rows from 8+ game matchups, continuously appended
 
-**Likely next priorities (verify with user):**
-- Diagnose why bunt and MVP have been consistent losers at scale
-- Evaluate whether AUC threshold (0.58) is appropriate or needs raising
-- Grow training set — more games may unlock more LR words
+**Active market set (since June 7 2026):** 12 words — Kalshi dropped `bullpen`,
+`perfect_game`, `triple`, `double_play` permanently. Current set:
+`pinch hit`, `mvp`, `pitch clock`, `grand slam`, `extra inning`, `trade`,
+`bases loaded`, `what a catch`, `walk off`, `bunt`, `error`, `wild pitch`.
+
+**MLB hydrate=broadcasts blocked:** The MLB Stats API now returns 406 for
+`hydrate=broadcasts`. Game discovery now uses `find_games_from_kalshi()` —
+queries Kalshi open KXMLBMENTION events directly, then looks up game_pk from
+MLB `/schedule?hydrate=team` (no broadcasts needed). `find_national_games()` is
+kept in `collect_latency_data.py` for reference but not called.
+
+**Sibling projects (also inactive):**
+- NBA: `/Users/Ari/repos/personal/money/basketball-mentions/` — `nba-monitor.service` stopped
+- MLB Outcomes: `/root/mlb-outcomes/` — `mlb-monitor.service` stopped June 14
+
+**Next priorities (verify with user):**
+- Run `analyze_latency.py` to measure actual lag on collected data
+- Determine if lag is consistently > ~15s (tradeable) or if market reprices too fast
+- If tradeable: build execution logic into `collect_latency_data.py` or a new script
 
 ---
 
@@ -496,19 +516,19 @@ home advantage without adjusting for team quality differential).
 **`split_team_codes` fix:** Validates both halves against `KNOWN_TEAMS` set and
 tries 3-char splits before 2-char to avoid garbled codes (e.g., MIN+KC not MI+NKC).
 
-**Systemd service:** `mlb-monitor.service` (running, enabled)
+**Systemd service:** `mlb-monitor.service` — **INACTIVE, disabled** (stopped June 14, 2026)
 
 ```bash
 systemctl status mlb-monitor
 journalctl -u mlb-monitor -f
-systemctl restart mlb-monitor
+systemctl restart mlb-monitor   # if ever reactivated
 ```
 
 Log: `/var/log/mlb-monitor.log`
 State: `/root/mlb-outcomes/monitor_state.json`
 Kalshi key: `/root/mlb-outcomes/kalshi_key.txt`
 Telegram bot: @MLB_Outcomes_Bot (`TELEGRAM_CHAT_ID=7181028824`)
-Cron: `0 16 * * *` → `daily_report.py` (noon ET P&L summary)
+Cron: `0 16 * * *` → `daily_report.py` (noon ET P&L summary) — verify still active before relying on it
 
 **Telegram commands:** `/status` `/pause` `/resume` `/logs`
 
