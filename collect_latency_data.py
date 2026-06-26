@@ -188,13 +188,14 @@ def write_prices(rows: list) -> None:
 class GameMonitor:
     """Tracks live state for one game."""
 
-    def __init__(self, game_pk, away, home, kalshi_event_ticker, word_tickers):
-        # type: (int, str, str, str, Dict[str, str]) -> None
+    def __init__(self, game_pk, away, home, kalshi_event_ticker, word_tickers, game_start_ts=0.0):
+        # type: (int, str, str, str, Dict[str, str], float) -> None
         self.game_pk              = game_pk
         self.away                 = away
         self.home                 = home
         self.kalshi_event_ticker  = kalshi_event_ticker
         self.word_tickers         = word_tickers   # {word: market_ticker}
+        self.game_start_ts        = game_start_ts  # Unix ts of scheduled first pitch
         self.price_cache          = {}             # {ticker: {bid,ask,mid}} — last seen price
         self.seen_keys            = set()          # type: Set[Tuple]
         self.extra_inning_fired   = False
@@ -448,20 +449,26 @@ def find_games_from_kalshi(k, game_date):
                 home   = teams.get('home', {}).get('team', {}).get('abbreviation', '')
                 pk     = g.get('gamePk')
                 status = g.get('status', {}).get('abstractGameState', 'Preview')
-                mlb_index[(away, home)] = (pk, status)
+                try:
+                    s = g.get('gameDate', '').replace('Z', '+00:00')
+                    game_start_ts = datetime.fromisoformat(s).timestamp()
+                except Exception:
+                    game_start_ts = 0.0
+                mlb_index[(away, home)] = (pk, status, game_start_ts)
 
     games = []
     for away_mlb, home_mlb in today_events:
-        pk, status = mlb_index.get((away_mlb, home_mlb), (None, 'Preview'))
+        pk, status, game_start_ts = mlb_index.get((away_mlb, home_mlb), (None, 'Preview', 0.0))
         if pk is None:
             log(f'  WARN: no MLB game_pk for {away_mlb}@{home_mlb} on {game_date}')
             continue
         games.append({
-            'game_pk':  pk,
-            'away':     away_mlb,
-            'home':     home_mlb,
-            'status':   status,
-            'networks': [],
+            'game_pk':       pk,
+            'away':          away_mlb,
+            'home':          home_mlb,
+            'status':        status,
+            'networks':      [],
+            'game_start_ts': game_start_ts,
         })
     return games
 
@@ -511,14 +518,19 @@ def _activate_game(k, g, today):
     if not word_tickers:
         return None
     log(f'  Activated {ev_ticker}: {len(word_tickers)} markets')
-    gm   = GameMonitor(g['game_pk'], g['away'], g['home'], ev_ticker, word_tickers)
+    gm   = GameMonitor(g['game_pk'], g['away'], g['home'], ev_ticker, word_tickers,
+                       g.get('game_start_ts', 0.0))
     feed = get_json(f'https://statsapi.mlb.com/api/v1.1/game/{gm.game_pk}/feed/live')
     if feed:
         gm.catchup(feed)
-    rows = gm.fetch_all_prices(k)
-    write_prices(rows)
-    log(f'  [{gm.away}@{gm.home}] seeded '
-        f'{sum(1 for r in rows if r.get("mid") != "")}/{len(rows)} prices')
+    if ts_now() >= gm.game_start_ts:
+        rows = gm.fetch_all_prices(k)
+        write_prices(rows)
+        log(f'  [{gm.away}@{gm.home}] seeded '
+            f'{sum(1 for r in rows if r.get("mid") != "")}/{len(rows)} prices')
+    else:
+        start_et = datetime.fromtimestamp(gm.game_start_ts, ET).strftime('%H:%M ET')
+        log(f'  [{gm.away}@{gm.home}] first pitch {start_et} — price collection starts then')
     return gm
 
 
@@ -543,11 +555,12 @@ def _poll_game(k, gm):
                 f'pre_mid={ev["pre_mid"]}')
             write_event(ev)
             gm.event_count += 1
-    rows = gm.fetch_all_prices(k)
-    write_prices(rows)
-    gm.price_row_count += len(rows)
-    log(f'  [{gm.away}@{gm.home}] '
-        + '  '.join(f'{r["word"][:4]}={r["mid"]}' for r in rows if r.get('mid') != ''))
+    if ts_now() >= gm.game_start_ts:
+        rows = gm.fetch_all_prices(k)
+        write_prices(rows)
+        gm.price_row_count += len(rows)
+        log(f'  [{gm.away}@{gm.home}] '
+            + '  '.join(f'{r["word"][:4]}={r["mid"]}' for r in rows if r.get('mid') != ''))
     return new_events
 
 
