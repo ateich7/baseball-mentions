@@ -206,6 +206,10 @@ def lookup_announcers(tv_home: str, tv_national: str, year: int) -> tuple:
     Returns ('', '') on table miss — transcript regex in add_broadcasters.py handles the fallback.
     """
     try:
+        import sys as _sys, os as _os
+        _bc_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'prediction')
+        if _bc_dir not in _sys.path:
+            _sys.path.insert(0, _bc_dir)
         from broadcast_crews import CREW
         for network in (tv_home, tv_national):
             if not network:
