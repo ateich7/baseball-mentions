@@ -506,8 +506,9 @@ def find_national_games(game_date):
 
 # ── Main loop helpers ─────────────────────────────────────────────────────────
 
-DAILY_START_HOUR = 10   # 10am ET — time to begin each day's game search
-MARKET_RETRY     = 1800 # 30 min between attempts to find Kalshi markets for pending games
+DAILY_START_HOUR  = 10    # 10am ET — time to begin each day's game search
+MARKET_RETRY      = 1800  # 30 min between attempts to find Kalshi markets for pending games
+PENDING_TIMEOUT   = 4 * 3600  # drop pending game if no markets found 4h past scheduled start
 
 
 def _activate_game(k, g, today):
@@ -614,13 +615,17 @@ def main() -> None:
 
             while pending or monitors:
 
-                # ── Roll over if calendar date has advanced ────────────────────
-                if datetime.now(ET).date() != today:
-                    if pending:
-                        names = ', '.join(f'{g["away"]}@{g["home"]}' for g in pending)
-                        log(f'Date rolled to {datetime.now(ET).date()} — no Kalshi markets found for {names} on {today}')
-                        tg_send(f'No Kalshi markets for {names} on {today}. Moving to next day.')
-                    break
+                # ── Expire pending games that are well past their start time ──
+                now_ts = ts_now()
+                expired = [g for g in pending
+                           if g.get('game_start_ts', 0) > 0
+                           and now_ts > g['game_start_ts'] + PENDING_TIMEOUT]
+                if expired:
+                    pending = [g for g in pending if g not in expired]
+                    for g in expired:
+                        name = f'{g["away"]}@{g["home"]}'
+                        log(f'  {name} — no Kalshi markets found {PENDING_TIMEOUT // 3600}h past first pitch, giving up')
+                        tg_send(f'Gave up waiting for Kalshi markets: {name}')
 
                 # ── Try activating pending games (every MARKET_RETRY seconds) ──
                 if pending and ts_now() - last_retry_ts >= MARKET_RETRY:
