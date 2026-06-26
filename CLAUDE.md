@@ -51,9 +51,11 @@ git push
 ssh trading-server "cd /root/baseball-mentions && git pull"
 ```
 
-No services need restarting after a pull — `collect_latency_data.py` is run
-manually and picks up changes on the next invocation. If the monitor is ever
-reactivated, restart it with `systemctl restart baseball-monitor`.
+After a git pull, restart `latency-collect.service` to pick up code changes:
+```bash
+ssh trading-server "systemctl restart latency-collect"
+```
+If the prediction monitor is ever reactivated: `systemctl restart baseball-monitor`.
 
 **What is and isn't in git:**
 
@@ -104,17 +106,26 @@ KALSHI_KEY_PATH=/root/baseball-mentions/kalshi_key.txt
 
 ## Daily workflow (current — latency arbitrage phase)
 
-**On game days** (nationally televised games only): start data collection on the server.
+**`collect_latency_data.py` runs as a systemd service (`latency-collect.service`).**
+It starts automatically on boot, restarts on crash, and runs continuously.
+Do NOT run it manually — the service manages it.
+
 ```bash
-ssh trading-server
-cd /root/baseball-mentions
-KALSHI_KEY_ID=5da099c4-b40e-4ce0-a9a0-9f22fad881e5 \
-KALSHI_KEY_PATH=/root/baseball-mentions/kalshi_key.txt \
-/root/baseball-env/bin/python collect_latency_data.py
+# Check status / logs
+ssh trading-server "systemctl status latency-collect"
+ssh trading-server "tail -50 /var/log/latency-collect.log"
+
+# Restart after a code deploy
+ssh trading-server "systemctl restart latency-collect"
+
+# Stop / start manually
+ssh trading-server "systemctl stop latency-collect"
+ssh trading-server "systemctl start latency-collect"
 ```
+
 The script auto-discovers national games from Kalshi open events, polls
 MLB live feed every 10s, writes events + prices to `data/`. Runs all day,
-sleeps overnight, resumes next day. Kill with Ctrl-C when done collecting.
+sleeps overnight, resumes next day.
 
 **After a collection session** (next session, not necessarily same day):
 ```bash
@@ -332,6 +343,20 @@ caps any single bet at 50% of balance. With ~$50 balance, typical bet: $1–$4.
 
 ---
 
+## latency-collect.service lifecycle
+
+**`latency-collect.service` is ACTIVE and ENABLED** (runs `collect_latency_data.py` continuously).
+
+Unit file: `/etc/systemd/system/latency-collect.service`
+Log file: `/var/log/latency-collect.log`
+Key settings: `Restart=always`, `RestartSec=30`, `MemoryMax=200M`
+
+**Env vars** set in the unit file:
+`KALSHI_KEY_ID`, `KALSHI_KEY_PATH=/root/baseball-mentions/kalshi_key.txt`,
+`TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`, `PYTHONUNBUFFERED=1`
+
+---
+
 ## monitor.py lifecycle
 
 **`baseball-monitor.service` is currently INACTIVE and DISABLED** (stopped June 8, 2026).
@@ -361,10 +386,9 @@ State file: `/root/baseball-mentions/monitor_state.json`
 
 ## Telegram alerting
 
-`TELEGRAM_TOKEN` and `TELEGRAM_CHAT_ID` are env vars. When running
-`collect_latency_data.py` manually they must be set in the shell, or the
-script runs silently without Telegram. When `baseball-monitor.service` was
-active, these were set in the unit file.
+`TELEGRAM_TOKEN` and `TELEGRAM_CHAT_ID` are env vars set in `latency-collect.service`'s
+unit file — no manual setup needed when using the service. If ever running the script
+directly outside the service, set them in the shell.
 
 `tg_send()` silently swallows errors — if messages aren't arriving, check for
 `WARN tg_send:` in the script's stdout.
@@ -439,9 +463,9 @@ Use `utils.ip_to_float()` for all IP conversion.
 **As of 2026-06-26:**
 
 **Active strategy: latency arbitrage data collection**
-- `collect_latency_data.py` is the only active script. It is run manually on
-  game days (nationally televised games only). As of today it is currently
-  running on the server (PID 2069525, started ~16:12 UTC).
+- `collect_latency_data.py` runs continuously via `latency-collect.service` (ACTIVE,
+  ENABLED). The service started on June 26 and auto-restarts on crash. Code changes
+  require `systemctl restart latency-collect` to take effect.
 - All betting monitors are DEAD and DISABLED:
   - `baseball-monitor.service` — stopped June 8, disabled
   - `nba-monitor.service` — stopped June 8, disabled
