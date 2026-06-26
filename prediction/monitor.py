@@ -20,6 +20,9 @@ from datetime import date, datetime, timezone, timedelta
 
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 from kalshi import KalshiClient
 from bet_today import (
     fetch_today_games, build_feature_rows, predict_kalshi,
@@ -32,7 +35,7 @@ from bet_today import (
 
 KALSHI_KEY_ID   = os.getenv('KALSHI_KEY_ID',  '')
 KALSHI_KEY_PATH = os.getenv('KALSHI_KEY_PATH', '/root/baseball-mentions/kalshi_key.txt')
-MODEL_PATH      = 'models/kalshi_models.pkl'
+MODEL_PATH      = os.path.join(_ROOT, 'models', 'kalshi_models.pkl')
 STATE_FILE      = '/root/baseball-mentions/monitor_state.json'
 
 MIN_EDGE       = 0.08   # minimum edge to place a bet

@@ -3,7 +3,8 @@ settled_review.py — pull all settled KXMLBMENTION bets and compute P&L.
 Run on server:
   KALSHI_KEY_ID=... KALSHI_KEY_PATH=... /root/baseball-env/bin/python settled_review.py
 """
-import os
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from kalshi import KalshiClient
 from utils import TICKER_SUFFIX_TO_WORD
 

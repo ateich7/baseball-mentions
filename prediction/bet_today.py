@@ -18,6 +18,10 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 from kalshi import KalshiClient
 from utils import (
     get_json, ip_to_float, fetch_team_stats,
@@ -29,7 +33,7 @@ from utils import (
 
 KALSHI_KEY_ID    = os.getenv('KALSHI_KEY_ID',  '')
 KALSHI_KEY_PATH  = os.getenv('KALSHI_KEY_PATH', '~/.ssh/kalshi.pem')
-MODEL_PATH       = 'models/kalshi_models.pkl'
+MODEL_PATH       = os.path.join(_ROOT, 'models', 'kalshi_models.pkl')
 
 # Cap per-bet spend at 50% of account balance.
 # Quarter-Kelly fractions are applied against the live balance, so bet sizes

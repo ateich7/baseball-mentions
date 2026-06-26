@@ -15,6 +15,9 @@ Usage:
 import csv, os, re, sys, time
 from datetime import date, timedelta
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 from kalshi import KalshiClient
 from broadcast_crews import CREW
 from utils import (
@@ -25,7 +28,7 @@ from utils import (
 )
 # ── Output ────────────────────────────────────────────────────────────────────
 
-OUTPUT = 'kalshi_outcomes.csv'
+OUTPUT = os.path.join(_ROOT, 'data', 'kalshi_outcomes.csv')
 
 # ── Word / market mapping ─────────────────────────────────────────────────────
 

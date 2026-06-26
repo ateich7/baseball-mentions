@@ -19,9 +19,10 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.dummy import DummyClassifier
 
 warnings.filterwarnings('ignore')
-os.makedirs('models', exist_ok=True)
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.makedirs(os.path.join(_ROOT, 'models'), exist_ok=True)
 
-INPUT = 'kalshi_outcomes.csv'
+INPUT = os.path.join(_ROOT, 'data', 'kalshi_outcomes.csv')
 
 # ── Target words ──────────────────────────────────────────────────────────────
 TARGETS = [
@@ -152,7 +153,7 @@ bundle = {
     'scaler':        scaler,
 }
 
-with open('models/kalshi_models.pkl', 'wb') as fh:
+with open(os.path.join(_ROOT, 'models', 'kalshi_models.pkl'), 'wb') as fh:
     pickle.dump(bundle, fh)
 print(f'\n→ models/kalshi_models.pkl')
 
