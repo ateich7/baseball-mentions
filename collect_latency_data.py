@@ -607,7 +607,7 @@ def main() -> None:
             for g in games_info:
                 log(f'  {g["away"]}@{g["home"]}  status={g["status"]}')
 
-            lines = [f"Today's Games — {today}"]
+            lines = [f"Todays Games — {today.strftime('%B %-d')}"]
             for g in games_info:
                 lines.append(f'  {g["away"]}@{g["home"]}')
             tg_send('\n'.join(lines))
