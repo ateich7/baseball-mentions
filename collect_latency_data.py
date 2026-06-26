@@ -658,7 +658,7 @@ def main() -> None:
                 for gm in monitors:
                     _poll_game(k, gm)
 
-                    if ts_now() - gm.last_heartbeat_ts >= HEARTBEAT_INTERVAL:
+                    if ts_now() >= gm.game_start_ts and ts_now() - gm.last_heartbeat_ts >= HEARTBEAT_INTERVAL:
                         gm.last_heartbeat_ts = ts_now()
                         snaps = gm.price_row_count // max(len(gm.word_tickers), 1)
                         tg_send(
