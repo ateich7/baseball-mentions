@@ -107,6 +107,7 @@ def analyze(events: List[Dict], prices: List[Dict], outcomes: Dict[Tuple[int, st
     per_market: Dict[str, Dict] = defaultdict(lambda: {
         'n_series': 0, 'n_crossed': 0, 'n_with_outcome': 0, 'n_correct': 0,
         'n_stuck': 0, 'n_reversed': 0, 'n_explained': 0, 'skip_fracs': [],
+        'entry_costs': [], 'taker_payoffs': [], 'maker_payoffs': [],
     })
 
     for (game_pk, word), rows in idx.series.items():
@@ -130,8 +131,24 @@ def analyze(events: List[Dict], prices: List[Dict], outcomes: Dict[Tuple[int, st
         outcome = outcomes.get((game_pk, word))
         if outcome is not None:
             m['n_with_outcome'] += 1
-            if implied == outcome:
+            correct = (implied == outcome)
+            if correct:
                 m['n_correct'] += 1
+
+            # Taker entry cost: what you'd actually pay right now to take this
+            # side — yes_ask on the high side, (1 - yes_bid) for a no on the
+            # low side (Kalshi's implied no-price). Falls back to mid if the
+            # book side is missing.
+            if side == 'high':
+                taker_cost = cross['ask'] if cross.get('ask') is not None else cross['mid']
+                maker_cost = cross['mid']
+            else:
+                taker_cost = (1 - cross['bid']) if cross.get('bid') is not None else (1 - cross['mid'])
+                maker_cost = 1 - cross['mid']
+
+            m['entry_costs'].append(taker_cost)
+            m['taker_payoffs'].append((1 - taker_cost) if correct else -taker_cost)
+            m['maker_payoffs'].append((1 - maker_cost) if correct else -maker_cost)
 
         if stayed_put(rows, win, cross['ts'], side):
             m['n_stuck'] += 1
@@ -183,6 +200,81 @@ def print_report(per_market: Dict[str, Dict], hi: float, lo: float) -> None:
     print('  automate for that market. High cross% + high avg skip% = it also saves real trading time.')
 
 
+TAKER_FEE = 0.07  # fraction of profit, per CLAUDE.md
+
+
+def print_gap_report(per_market: Dict[str, Dict], hi: float, lo: float) -> None:
+    print('\n' + '=' * 100)
+    print(f'GAP AFTER CROSSING — is there still money on the table right after price hits {hi:.2f}/{lo:.2f}?')
+    print('=' * 100)
+    print('Realized $ per $1 wagered, entering the instant price crosses the threshold.')
+    print(f'  {"Market":<15} {"n":>4} {"avg entry":>10} {"taker (pre-fee)":>16} '
+          f'{"taker (after 7% fee)":>21} {"maker (fee-free)":>17}')
+    print('  ' + '-' * 88)
+
+    for word in sorted(per_market, key=lambda w: -len(per_market[w]['taker_payoffs'])):
+        m = per_market[word]
+        n = len(m['taker_payoffs'])
+        if n == 0:
+            continue
+        avg_entry = sum(m['entry_costs']) / n
+        avg_taker = sum(m['taker_payoffs']) / n
+        avg_taker_fee = sum(p * (1 - TAKER_FEE) if p > 0 else p for p in m['taker_payoffs']) / n
+        avg_maker = sum(m['maker_payoffs']) / n
+        print(f'  {word:<15} {n:>4} {avg_entry:>+10.3f} {avg_taker:>+16.3f} '
+              f'{avg_taker_fee:>+21.3f} {avg_maker:>+17.3f}')
+
+    print()
+    print('  avg entry     = avg price paid to take the implied side right at the crossing')
+    print('                  (yes_ask on the high side, implied no-ask = 1-yes_bid on the low side)')
+    print('  taker         = avg profit/loss per $1 risked, crossing the spread to enter immediately')
+    print('  maker         = same, but assuming a fee-free fill at the pre-crossing mid instead of')
+    print('                  crossing the spread — the optimistic case if you can post ahead of the move')
+    print('  Positive taker numbers mean real edge survives paying the spread; positive maker-only')
+    print('  numbers mean the edge exists but the spread is currently eating it — worth trying to')
+    print('  quote inside the market rather than taking, not worth chasing at the ask.')
+
+
+def sweep_thresholds(events: List[Dict], prices: List[Dict], outcomes: Dict[Tuple[int, str], int],
+                      buffer_s: float, thresholds: List[Tuple[float, float]]) -> List[Dict]:
+    rows = []
+    for hi, lo in thresholds:
+        per_market = analyze(events, prices, outcomes, hi, lo, buffer_s)
+        n_series = sum(m['n_series'] for m in per_market.values())
+        n_crossed = sum(m['n_crossed'] for m in per_market.values())
+        n_with_outcome = sum(m['n_with_outcome'] for m in per_market.values())
+        n_correct = sum(m['n_correct'] for m in per_market.values())
+        n_stuck = sum(m['n_stuck'] for m in per_market.values())
+        all_skip = [f for m in per_market.values() for f in m['skip_fracs']]
+        rows.append({
+            'hi': hi, 'lo': lo,
+            'n_series': n_series, 'n_crossed': n_crossed,
+            'cross_pct': 100 * n_crossed / n_series if n_series else 0,
+            'accuracy': 100 * n_correct / n_with_outcome if n_with_outcome else None,
+            'n_with_outcome': n_with_outcome,
+            'stuck_pct': 100 * n_stuck / n_crossed if n_crossed else 0,
+            'skip_pct': 100 * sum(all_skip) / len(all_skip) if all_skip else 0,
+        })
+    return rows
+
+
+def print_sweep_report(rows: List[Dict]) -> None:
+    print('\n' + '=' * 100)
+    print('THRESHOLD SWEEP — how far can the crossing range widen before accuracy degrades?')
+    print('(pooled across all markets)')
+    print('=' * 100)
+    print(f'  {"hi/lo":>11} {"crossed":>8} {"cross%":>7} {"accuracy":>16} {"stuck%":>7} {"avg skip%":>10}')
+    print('  ' + '-' * 66)
+    for r in rows:
+        acc = f'{r["accuracy"]:.0f}% (n={r["n_with_outcome"]})' if r['accuracy'] is not None else '—'
+        print(f'  {r["hi"]:.2f}/{r["lo"]:.2f}  {r["n_crossed"]:>8} {r["cross_pct"]:>6.0f}% '
+              f'{acc:>16} {r["stuck_pct"]:>6.0f}% {r["skip_pct"]:>9.0f}%')
+    print()
+    print('  Widening the range (moving toward 0.50/0.50) trades accuracy for coverage — more')
+    print('  crossings and more skip time, but each crossing is a weaker signal. Narrowing toward')
+    print('  0.99/0.01 does the opposite: fewer, near-certain crossings, less time saved.')
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--events', default=EVENTS_FILE)
@@ -196,8 +288,15 @@ def main() -> None:
     events = load_events(args.events)
     prices = load_prices(args.prices)
     outcomes = load_outcomes(args.outcomes)
+
     per_market = analyze(events, prices, outcomes, args.hi, args.lo, args.buffer)
     print_report(per_market, args.hi, args.lo)
+    print_gap_report(per_market, args.hi, args.lo)
+
+    thresholds = [(0.99, 0.01), (0.97, 0.03), (0.95, 0.05), (0.90, 0.10), (0.85, 0.15),
+                  (0.80, 0.20), (0.75, 0.25), (0.70, 0.30), (0.65, 0.35), (0.60, 0.40)]
+    sweep_rows = sweep_thresholds(events, prices, outcomes, args.buffer, thresholds)
+    print_sweep_report(sweep_rows)
 
 
 if __name__ == '__main__':
