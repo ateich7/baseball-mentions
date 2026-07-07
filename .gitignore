@@ -32,6 +32,9 @@ data/latency_prices.csv
 # Generated plot images
 plots/
 
+# Generated HTML dashboards (Artifact source files — redeploy via the Artifact tool)
+reports/
+
 # Archive: large/stale files not worth versioning
 archive/transcripts/
 archive/logs/

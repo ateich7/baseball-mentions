@@ -202,6 +202,22 @@ place to look for how backtest results have moved as more games got collected.
 **`.bak` files on server** (`bet_today.py.bak`, `monitor.py.bak`, etc.) are
 the previous versions before the last deploy. Safe to ignore; don't sync them locally.
 
+## Web dashboards (Artifacts)
+
+`reports/` (local only, gitignored — same treatment as `plots/`) holds the source
+HTML for Claude Artifact dashboards built from these scripts. Keep new dashboard
+source files here, not in a session's ephemeral scratchpad, so they survive
+between sessions.
+
+- `reports/latency_dashboard.html` — the `analyze_latency.py` event-type × market
+  cross-tab, published at https://claude.ai/code/artifact/5289a3f0-2fb8-4512-8b57-c0aa66d53e70
+  (built 2026-07-07, data through 32 games / 2026-07-06). To refresh: re-run
+  `analyze_latency.py` on the server, edit the embedded numbers in this file
+  (the noise floor rows, the known-pairs table, and the `hiddenRows`/`trends`
+  JS arrays near the bottom), then redeploy with the Artifact tool passing this
+  file plus the URL above — that updates the same link rather than minting a
+  new one. The design/CSS/layout doesn't need to be rebuilt, only the numbers.
+
 **`archive/` directory** — legacy XGBoost transcript pipeline (no longer used):
 - `archive/scripts/` — `train_models.py`, `pipeline.py`, `enrich_data.py`, `add_team_stats.py`, `add_broadcasters.py`, `clean_data.py`, `make_model_features.py`
 - `archive/data/` — `game_labels*.csv`, `model_features.csv` (old transcript model datasets)
