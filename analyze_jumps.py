@@ -24,6 +24,7 @@ Usage:
 import argparse, csv, os, sys
 from bisect import bisect_left
 from collections import defaultdict
+from datetime import date
 from typing import Dict, List, Optional, Tuple
 
 from analyze_latency import load_events, load_prices, PriceIndex, EVENTS_FILE, PRICES_FILE
@@ -275,6 +276,49 @@ def print_sweep_report(rows: List[Dict]) -> None:
     print('  0.99/0.01 does the opposite: fewer, near-certain crossings, less time saved.')
 
 
+HISTORY_FILE = os.path.join(DATA_DIR, 'opt_out_history.csv')
+HISTORY_COLS = [
+    'run_date', 'hi', 'lo', 'market', 'n_series', 'n_crossed', 'cross_pct',
+    'accuracy_pct', 'n_with_outcome', 'stuck_pct', 'explained_pct', 'skip_pct',
+    'avg_entry', 'taker_pnl', 'taker_pnl_after_fee', 'maker_pnl',
+]
+
+
+def log_history(per_market: Dict[str, Dict], hi: float, lo: float, run_date: str) -> None:
+    """
+    Append one row per market to data/opt_out_history.csv so results from
+    today are still comparable after more games have been collected — the
+    printed report alone doesn't persist anywhere once the terminal scrolls.
+    Server-only, append-only, not git-tracked (same treatment as the other
+    latency_*.csv data files).
+    """
+    need_header = not os.path.exists(HISTORY_FILE)
+    with open(HISTORY_FILE, 'a', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=HISTORY_COLS)
+        if need_header:
+            w.writeheader()
+        for word, m in per_market.items():
+            if m['n_crossed'] == 0:
+                continue
+            n_gap = len(m['taker_payoffs'])
+            w.writerow({
+                'run_date': run_date, 'hi': hi, 'lo': lo, 'market': word,
+                'n_series': m['n_series'], 'n_crossed': m['n_crossed'],
+                'cross_pct': round(100 * m['n_crossed'] / m['n_series'], 1) if m['n_series'] else '',
+                'accuracy_pct': round(100 * m['n_correct'] / m['n_with_outcome'], 1) if m['n_with_outcome'] else '',
+                'n_with_outcome': m['n_with_outcome'],
+                'stuck_pct': round(100 * m['n_stuck'] / m['n_crossed'], 1),
+                'explained_pct': round(100 * m['n_explained'] / m['n_crossed'], 1),
+                'skip_pct': round(100 * sum(m['skip_fracs']) / len(m['skip_fracs']), 1) if m['skip_fracs'] else '',
+                'avg_entry': round(sum(m['entry_costs']) / n_gap, 4) if n_gap else '',
+                'taker_pnl': round(sum(m['taker_payoffs']) / n_gap, 4) if n_gap else '',
+                'taker_pnl_after_fee': round(sum(
+                    p * (1 - TAKER_FEE) if p > 0 else p for p in m['taker_payoffs']) / n_gap, 4) if n_gap else '',
+                'maker_pnl': round(sum(m['maker_payoffs']) / n_gap, 4) if n_gap else '',
+            })
+    print(f'\nAppended {sum(1 for m in per_market.values() if m["n_crossed"] > 0)} rows to {HISTORY_FILE}')
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--events', default=EVENTS_FILE)
@@ -283,6 +327,7 @@ def main() -> None:
     ap.add_argument('--hi', type=float, default=0.90)
     ap.add_argument('--lo', type=float, default=0.10)
     ap.add_argument('--buffer', type=float, default=EXPLAIN_BUFFER_S)
+    ap.add_argument('--no-log', action='store_true', help='skip appending to opt_out_history.csv')
     args = ap.parse_args()
 
     events = load_events(args.events)
@@ -297,6 +342,9 @@ def main() -> None:
                   (0.80, 0.20), (0.75, 0.25), (0.70, 0.30), (0.65, 0.35), (0.60, 0.40)]
     sweep_rows = sweep_thresholds(events, prices, outcomes, args.buffer, thresholds)
     print_sweep_report(sweep_rows)
+
+    if not args.no_log:
+        log_history(per_market, args.hi, args.lo, date.today().isoformat())
 
 
 if __name__ == '__main__':

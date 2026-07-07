@@ -164,7 +164,9 @@ To edit: read from server, edit locally, scp back. Uses `/root/baseball-env/bin/
 | File | Where | Role |
 |------|-------|------|
 | `collect_latency_data.py` | local + server root | Main loop: polls MLB live feed + Kalshi prices every 10s; writes to `data/` |
-| `analyze_latency.py` | local + server root | Post-game analysis: aligns events to price time series, prints lag stats |
+| `analyze_latency.py` | local + server root | Cross-tabs every logged event type against every market (not just each event's own pre-mapped word), scores each pair against that market's ambient noise floor, ranks known + hidden pairs, breaks down by inning. Run with no args for the default report; `--verbose` for the old per-event dump |
+| `fetch_latency_outcomes.py` | local + server root | Fetches real Kalshi settlement results (yes/no) for the specific games in `latency_events.jsonl`, by event ticker → `data/latency_outcomes.csv`. Needs Kalshi credentials — server only. Re-run periodically to pick up newly-settled games; not automatic |
+| `analyze_jumps.py` | local + server root | Backtests "opt out once price is already extreme (≥0.90/≤0.10)": accuracy vs. real settlement, whether it reverses, gap/P&L still capturable right after crossing (taker vs. maker), and a threshold sensitivity sweep. Needs `latency_outcomes.csv`. Appends one row per market per run to `data/opt_out_history.csv` (`--no-log` to skip) so results are comparable over time as more games are collected |
 | `kalshi.py` | local + server root | `KalshiClient` — RSA-PSS auth, all Kalshi HTTP calls |
 | `utils.py` | local + server root | Shared helpers: `get_json`, `ip_to_float`, `fetch_team_stats`, `TICKER_SUFFIX_TO_WORD` |
 | `test_pipeline.py` | local + server root | Smoke-tests the data pipeline with synthetic test data |
@@ -187,8 +189,15 @@ server first (`ssh trading-server cat /root/baseball-mentions/retrain.py`), edit
 locally, then scp back.
 
 **Server file structure:** Latency scripts (`collect_latency_data.py`, `analyze_latency.py`,
-`kalshi.py`, `utils.py`) live at `/root/baseball-mentions/` root. The old prediction
-pipeline is in `/root/baseball-mentions/prediction/`.
+`fetch_latency_outcomes.py`, `analyze_jumps.py`, `kalshi.py`, `utils.py`) live at
+`/root/baseball-mentions/` root. The old prediction pipeline is in
+`/root/baseball-mentions/prediction/`.
+
+**`data/latency_outcomes.csv`** and **`data/opt_out_history.csv`** are server-only,
+not git-tracked (same treatment as `latency_events.jsonl`/`latency_prices.csv`).
+The former is a point-in-time snapshot from the last `fetch_latency_outcomes.py`
+run; the latter is append-only across every `analyze_jumps.py` run, so it's the
+place to look for how backtest results have moved as more games got collected.
 
 **`.bak` files on server** (`bet_today.py.bak`, `monitor.py.bak`, etc.) are
 the previous versions before the last deploy. Safe to ignore; don't sync them locally.
