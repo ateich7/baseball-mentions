@@ -498,9 +498,9 @@ Use `utils.ip_to_float()` for all IP conversion.
 - No relevant cron jobs running (daily retrain cron is paused; mlb-outcomes daily
   report cron appears gone too — verify before assuming it still runs).
 
-**Data collected so far:**
-- `data/latency_events.jsonl` — 178 events from 5 games (June 14, 20, 21)
-- `data/latency_prices.csv` — ~291k price rows from 8+ game matchups, continuously appended
+**Data collected so far (as of 2026-07-09):**
+- `data/latency_events.jsonl` — 3,261 events from 34 games
+- `data/latency_prices.csv` — ~647k price rows, continuously appended
 
 **Active market set (since June 7 2026):** 12 words — Kalshi dropped `bullpen`,
 `perfect_game`, `triple`, `double_play` permanently. Current set:
@@ -516,6 +516,15 @@ kept in `collect_latency_data.py` for reference but not called.
 **Sibling projects (also inactive):**
 - NBA: `/Users/Ari/repos/personal/money/basketball-mentions/` — `nba-monitor.service` stopped
 - MLB Outcomes: `/root/mlb-outcomes/` — `mlb-monitor.service` stopped June 14
+
+**Sibling project (active, paper-trading only):**
+- Kalshi Agent: `/Users/Ari/repos/personal/money/kalshi-agent/` (server:
+  `/root/kalshi-agent/`) — general-purpose, all-Kalshi-markets autonomous
+  research agent, deployed 2026-07-15. Uses only unauthenticated public
+  market data (`external-api.kalshi.com`) — no Kalshi key exists in that
+  project by design, so it can never place a real order. Paper-trades via a
+  headless `claude -p` loop and tracks hypothetical P&L. See its own
+  CLAUDE.md for the full design and safety rationale.
 
 **Next priorities (verify with user):**
 - Run `analyze_latency.py` to measure actual lag on collected data
