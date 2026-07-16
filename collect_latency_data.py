@@ -52,7 +52,6 @@ TELEGRAM_TOKEN   = os.getenv('TELEGRAM_TOKEN',   '')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID', '')
 
 POLL_INTERVAL      = 10    # seconds per loop — MLB live feed + all market prices
-HEARTBEAT_INTERVAL = 1800  # 30 minutes
 
 DATA_DIR    = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
 EVENTS_FILE = os.path.join(DATA_DIR, 'latency_events.jsonl')
@@ -202,7 +201,6 @@ class GameMonitor:
         self.game_over            = False
         self.event_count          = 0
         self.price_row_count      = 0
-        self.last_heartbeat_ts    = ts_now()
 
     def catchup(self, feed: dict) -> None:
         """Mark all already-completed plays as seen so we don't re-fire them."""
@@ -661,15 +659,6 @@ def main() -> None:
 
                 for gm in monitors:
                     _poll_game(k, gm)
-
-                    if ts_now() >= gm.game_start_ts and ts_now() - gm.last_heartbeat_ts >= HEARTBEAT_INTERVAL:
-                        gm.last_heartbeat_ts = ts_now()
-                        snaps = gm.price_row_count // max(len(gm.word_tickers), 1)
-                        tg_send(
-                            f'{gm.away}@{gm.home}\n'
-                            f'Events: {gm.event_count}  Snapshots: {snaps}\n'
-                            f'Still monitoring...'
-                        )
 
                     if not gm.game_over:
                         still_live.append(gm)
